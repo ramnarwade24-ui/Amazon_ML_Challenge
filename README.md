@@ -185,11 +185,14 @@ The feature engineering module ([src/features.py](file:///d:/amzaon%20ml/amazon_
 
 ### Validation Methodology & Performance
 - **Validation Split**: Grouped strictly at the **Source 1 entity level** (80% train, 20% validation) to prevent pair leakage.
-- **Optimal Probability Threshold**: **0.47** (selected via grid search strictly on validation macro $F_{0.5}$).
-- **Validation Macro $F_{0.5}$**: **0.7850** (primary challenge evaluation metric).
-- **Validation Precision**: **99.44%** (precision-heavy matching).
-- **Validation Recall**: **68.15%**.
-- **Singleton Accuracy**: **98.65%** (correctly predicts empty lists for singletons).
+- **Optimal Probability Threshold**: **0.750** (selected via grid search strictly on validation macro $F_{0.5}$).
+- **Validation Macro $F_{0.5}$**: **0.9573** (primary challenge evaluation metric).
+- **Validation Precision**: **98.84%** (precision-heavy matching).
+- **Validation Recall**: **93.42%**.
+- **Candidate Blocking Recall**: **98.20%** (partial entity recall) and **97.91%** link recall ceiling.
+- **Singleton Accuracy**: **96.41%** (correctly predicts empty lists for singletons).
+- **Non-Singleton $F_{0.5}$**: **0.9569**.
+- **Official Validator Status**: **PASS** (`student_resource/utils/validate_submission.py`).
 - **Model Artifact**: Serialized to `models/matcher.pkl` alongside `models/metadata.json`.
 
 ---

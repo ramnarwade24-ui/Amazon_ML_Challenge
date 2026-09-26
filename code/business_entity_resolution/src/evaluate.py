@@ -60,46 +60,66 @@ def evaluate_matcher(
     print(f"Using Decision Threshold: {decision_threshold:.3f}")
 
     print(f"\nLoading validation sample of {n_sample_s1:,} S1 records from training ground truth...")
-    df_gt, gt_map = load_ground_truth(TRAIN_GT_PATH, nrows=n_sample_s1)
-    s1_ids = list(df_gt["source1_entity_id"].values)
+    cache_dir = MODELS_DIR / "benchmark_cache"
+    if (cache_dir / "sample_s1.tsv").is_file() and (cache_dir / "sample_targets.tsv").is_file():
+        print(f"Loading evaluation data from benchmark cache: {cache_dir.resolve()}")
+        df_gt, gt_map = load_ground_truth(cache_dir / "sample_gt.tsv")
+        s1_df = pd.read_csv(cache_dir / "sample_s1.tsv", sep="\t", keep_default_na=False).head(n_sample_s1)
+        s1_ids = list(s1_df["entity_id"].values)
+        target_df = pd.read_csv(cache_dir / "sample_targets.tsv", sep="\t", keep_default_na=False)
+        s2_df = target_df[target_df["entity_id"].str.startswith("S2-")].copy()
+        s3_df = target_df[target_df["entity_id"].str.startswith("S3-")].copy()
+    else:
+        df_gt, gt_map = load_ground_truth(TRAIN_GT_PATH, nrows=n_sample_s1)
+        s1_ids = list(df_gt["source1_entity_id"].values)
 
-    all_s1_set = set(s1_ids)
-    s1_list = []
-    for chunk in pd.read_csv(TRAIN_S1_PATH, sep="\t", chunksize=250000, dtype=str, keep_default_na=False):
-        hit = chunk[chunk["entity_id"].isin(all_s1_set)]
-        if len(hit) > 0:
-            s1_list.append(hit)
-        if sum(len(x) for x in s1_list) >= len(s1_ids):
-            break
-    s1_df = pd.concat(s1_list, ignore_index=True).drop_duplicates(subset=["entity_id"])
+        all_s1_set = set(s1_ids)
+        s1_list = []
+        for chunk in pd.read_csv(TRAIN_S1_PATH, sep="\t", chunksize=250000, dtype=str, keep_default_na=False):
+            hit = chunk[chunk["entity_id"].isin(all_s1_set)]
+            if len(hit) > 0:
+                s1_list.append(hit)
+            if sum(len(x) for x in s1_list) >= len(s1_ids):
+                break
+        s1_df = pd.concat(s1_list, ignore_index=True).drop_duplicates(subset=["entity_id"])
 
-    # Collect true targets
-    target_ids = set()
-    for sid in s1_ids:
-        target_ids.update(gt_map.get(sid, set()))
+        # Collect true targets
+        target_ids = set()
+        for sid in s1_ids:
+            target_ids.update(gt_map.get(sid, set()))
 
-    s2_list = []
-    s3_list = []
-    for chunk in pd.read_csv(TRAIN_S2_PATH, sep="\t", chunksize=250000, dtype=str, keep_default_na=False):
-        hit = chunk[chunk["entity_id"].isin(target_ids)]
-        if len(hit) > 0:
-            s2_list.append(hit)
-        if len(s2_list) == 1:
-            s2_list.append(chunk.head(5000))
-        if sum(len(x) for x in s2_list) >= len(target_ids) // 2 + 10000:
-            break
+        # Load S2 and S3 pools capturing 100% of true targets for evaluation
+        s2_list = []
+        s2_needed = {t for t in target_ids if t.startswith("S2-")}
+        s2_extra = 15000
+        for chunk in pd.read_csv(TRAIN_S2_PATH, sep="\t", chunksize=250000, dtype=str, keep_default_na=False):
+            hit = chunk[chunk["entity_id"].isin(s2_needed)]
+            if len(hit) > 0:
+                s2_list.append(hit)
+                s2_needed -= set(hit["entity_id"])
+            if s2_extra > 0:
+                take = min(s2_extra, 5000)
+                s2_list.append(chunk.head(take))
+                s2_extra -= take
+            if not s2_needed and s2_extra <= 0:
+                break
+        s2_df = pd.concat(s2_list, ignore_index=True).drop_duplicates(subset=["entity_id"])
 
-    for chunk in pd.read_csv(TRAIN_S3_PATH, sep="\t", chunksize=250000, dtype=str, keep_default_na=False):
-        hit = chunk[chunk["entity_id"].isin(target_ids)]
-        if len(hit) > 0:
-            s3_list.append(hit)
-        if len(s3_list) == 1:
-            s3_list.append(chunk.head(5000))
-        if sum(len(x) for x in s3_list) >= len(target_ids) // 2 + 10000:
-            break
-
-    s2_df = pd.concat(s2_list, ignore_index=True).drop_duplicates(subset=["entity_id"])
-    s3_df = pd.concat(s3_list, ignore_index=True).drop_duplicates(subset=["entity_id"])
+        s3_list = []
+        s3_needed = {t for t in target_ids if t.startswith("S3-")}
+        s3_extra = 15000
+        for chunk in pd.read_csv(TRAIN_S3_PATH, sep="\t", chunksize=250000, dtype=str, keep_default_na=False):
+            hit = chunk[chunk["entity_id"].isin(s3_needed)]
+            if len(hit) > 0:
+                s3_list.append(hit)
+                s3_needed -= set(hit["entity_id"])
+            if s3_extra > 0:
+                take = min(s3_extra, 5000)
+                s3_list.append(chunk.head(take))
+                s3_extra -= take
+            if not s3_needed and s3_extra <= 0:
+                break
+        s3_df = pd.concat(s3_list, ignore_index=True).drop_duplicates(subset=["entity_id"])
 
     # Normalization
     s1_norm = preprocess_dataframe(s1_df)

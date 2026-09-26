@@ -6,10 +6,30 @@ Supports local execution and Google Colab execution seamlessly.
 import os
 from pathlib import Path
 
-# Base directories
-BASE_DIR = Path(os.getenv("AMAZON_ML_BASE_DIR", Path(__file__).resolve().parent.parent))
+# Base directory auto-discovery
+def _find_base_dir() -> Path:
+    env_dir = os.getenv("AMAZON_ML_BASE_DIR")
+    if env_dir:
+        return Path(env_dir)
+    curr = Path(__file__).resolve().parent
+    for p in [curr.parent, curr.parent.parent, curr.parent.parent.parent]:
+        if (p / "dataset").is_dir():
+            return p
+    return curr.parent.parent
 
-DATA_DIR = Path(os.getenv("AMAZON_ML_DATA_DIR", BASE_DIR / "dataset"))
+BASE_DIR = _find_base_dir()
+
+def _find_data_dir() -> Path:
+    env_data = os.getenv("AMAZON_ML_DATA_DIR")
+    if env_data:
+        return Path(env_data)
+    if (BASE_DIR / "dataset").is_dir():
+        return BASE_DIR / "dataset"
+    if (BASE_DIR.parent / "dataset").is_dir():
+        return BASE_DIR.parent / "dataset"
+    return BASE_DIR / "dataset"
+
+DATA_DIR = _find_data_dir()
 TRAIN_DATA_DIR = DATA_DIR / "train"
 TEST_DATA_DIR = DATA_DIR / "test"
 
@@ -50,16 +70,16 @@ BLOCKING_CONFIG = {
     # Character TF-IDF parameters
     "tfidf_ngram_range": (3, 4),
     "tfidf_min_df": 2,
-    "tfidf_max_features": 100_000,
+    "tfidf_max_features": 80_000,
     
     # TF-IDF cosine similarity retrieval
-    "tfidf_name_top_k": 5,
-    "tfidf_name_threshold": 0.45,
-    "tfidf_addr_top_k": 5,
-    "tfidf_addr_threshold": 0.40,
+    "tfidf_name_top_k": 8,
+    "tfidf_name_threshold": 0.38,
+    "tfidf_addr_top_k": 8,
+    "tfidf_addr_threshold": 0.35,
     
-    # Max candidates per S1 entity
-    "max_candidates_per_s1": 50,
+    # Max candidates per S1 entity (priority-ranked)
+    "max_candidates_per_s1": 35,
 }
 
 # Evaluation settings

@@ -119,6 +119,7 @@ def train_pipeline(
     val_split_ratio: float = 0.20,
     random_seed: int = RANDOM_SEED,
     model_output_path: Optional[Path] = None,
+    use_cache: bool = True,
 ) -> Dict[str, Any]:
     """
     Run complete training pipeline:
@@ -138,10 +139,24 @@ def train_pipeline(
     print("==========================================")
     print("STEP 1: Loading Dataset Sample for Training")
     print("==========================================")
-    # Load ground truth
-    df_gt, gt_map = load_ground_truth(TRAIN_GT_PATH, nrows=n_sample_s1)
-    all_s1_ids = df_gt["source1_entity_id"].values
-    n_total_s1 = len(all_s1_ids)
+    # Check if benchmark cache can be used for fast reproducible local training
+    cache_dir = MODELS_DIR / "benchmark_cache"
+    using_cached_sample = False
+    if use_cache and (cache_dir / "sample_s1.tsv").is_file() and (cache_dir / "sample_targets.tsv").is_file():
+        print(f"Loading training data from benchmark cache: {cache_dir.resolve()}")
+        df_gt, gt_map = load_ground_truth(cache_dir / "sample_gt.tsv")
+        s1_df = pd.read_csv(cache_dir / "sample_s1.tsv", sep="\t", keep_default_na=False)
+        targets_df = pd.read_csv(cache_dir / "sample_targets.tsv", sep="\t", keep_default_na=False)
+        s2_df = targets_df[targets_df["entity_id"].str.startswith("S2-")].copy()
+        s3_df = targets_df[targets_df["entity_id"].str.startswith("S3-")].copy()
+        all_s1_ids = df_gt["source1_entity_id"].values
+        n_total_s1 = len(all_s1_ids)
+        using_cached_sample = True
+    else:
+        # Load ground truth from raw files
+        df_gt, gt_map = load_ground_truth(TRAIN_GT_PATH, nrows=n_sample_s1)
+        all_s1_ids = df_gt["source1_entity_id"].values
+        n_total_s1 = len(all_s1_ids)
 
     # Stratified entity-level train / val split
     np.random.seed(random_seed)
@@ -156,47 +171,58 @@ def train_pipeline(
     print(f"Train S1 entities: {len(train_s1_ids):,} ({(1 - val_split_ratio)*100:.1f}%)")
     print(f"Val S1 entities:   {len(val_s1_ids):,} ({val_split_ratio*100:.1f}%)")
 
-    # Load S1 records
-    all_s1_set = set(all_s1_ids)
-    s1_list = []
-    for chunk in pd.read_csv(TRAIN_S1_PATH, sep="\t", chunksize=250000, dtype=str, keep_default_na=False):
-        hit = chunk[chunk["entity_id"].isin(all_s1_set)]
-        if len(hit) > 0:
-            s1_list.append(hit)
-        if sum(len(x) for x in s1_list) >= n_total_s1:
-            break
-    s1_df = pd.concat(s1_list, ignore_index=True).drop_duplicates(subset=["entity_id"])
+    if not using_cached_sample:
+        # Load S1 records
+        all_s1_set = set(all_s1_ids)
+        s1_list = []
+        for chunk in pd.read_csv(TRAIN_S1_PATH, sep="\t", chunksize=250000, dtype=str, keep_default_na=False):
+            hit = chunk[chunk["entity_id"].isin(all_s1_set)]
+            if len(hit) > 0:
+                s1_list.append(hit)
+            if sum(len(x) for x in s1_list) >= n_total_s1:
+                break
+        s1_df = pd.concat(s1_list, ignore_index=True).drop_duplicates(subset=["entity_id"])
+
+        # Collect true targets
+        all_true_target_ids = set()
+        for sid in all_s1_ids:
+            all_true_target_ids.update(gt_map.get(sid, set()))
+        print(f"Identified {len(all_true_target_ids):,} true target links in ground truth.")
+
+        # Load S2 and S3 pools capturing 100% of true targets for the S1 sample + background negatives
+        s2_list = []
+        s2_needed = {t for t in all_true_target_ids if t.startswith("S2-")}
+        s2_extra = 25000
+        for chunk in pd.read_csv(TRAIN_S2_PATH, sep="\t", chunksize=250000, dtype=str, keep_default_na=False):
+            hit = chunk[chunk["entity_id"].isin(s2_needed)]
+            if len(hit) > 0:
+                s2_list.append(hit)
+                s2_needed -= set(hit["entity_id"])
+            if s2_extra > 0:
+                take = min(s2_extra, 5000)
+                s2_list.append(chunk.head(take))
+                s2_extra -= take
+            if not s2_needed and s2_extra <= 0:
+                break
+        s2_df = pd.concat(s2_list, ignore_index=True).drop_duplicates(subset=["entity_id"])
+
+        s3_list = []
+        s3_needed = {t for t in all_true_target_ids if t.startswith("S3-")}
+        s3_extra = 25000
+        for chunk in pd.read_csv(TRAIN_S3_PATH, sep="\t", chunksize=250000, dtype=str, keep_default_na=False):
+            hit = chunk[chunk["entity_id"].isin(s3_needed)]
+            if len(hit) > 0:
+                s3_list.append(hit)
+                s3_needed -= set(hit["entity_id"])
+            if s3_extra > 0:
+                take = min(s3_extra, 5000)
+                s3_list.append(chunk.head(take))
+                s3_extra -= take
+            if not s3_needed and s3_extra <= 0:
+                break
+        s3_df = pd.concat(s3_list, ignore_index=True).drop_duplicates(subset=["entity_id"])
+
     print(f"Loaded {len(s1_df):,} Source 1 records.")
-
-    # Collect true targets
-    all_true_target_ids = set()
-    for sid in all_s1_ids:
-        all_true_target_ids.update(gt_map.get(sid, set()))
-    print(f"Identified {len(all_true_target_ids):,} true target links in ground truth.")
-
-    # Load S2 and S3 pools
-    s2_list = []
-    s3_list = []
-    for chunk in pd.read_csv(TRAIN_S2_PATH, sep="\t", chunksize=250000, dtype=str, keep_default_na=False):
-        hit = chunk[chunk["entity_id"].isin(all_true_target_ids)]
-        if len(hit) > 0:
-            s2_list.append(hit)
-        if len(s2_list) == 1:
-            s2_list.append(chunk.head(15000))
-        if sum(len(x) for x in s2_list) >= len(all_true_target_ids) // 2 + 25000:
-            break
-
-    for chunk in pd.read_csv(TRAIN_S3_PATH, sep="\t", chunksize=250000, dtype=str, keep_default_na=False):
-        hit = chunk[chunk["entity_id"].isin(all_true_target_ids)]
-        if len(hit) > 0:
-            s3_list.append(hit)
-        if len(s3_list) == 1:
-            s3_list.append(chunk.head(15000))
-        if sum(len(x) for x in s3_list) >= len(all_true_target_ids) // 2 + 25000:
-            break
-
-    s2_df = pd.concat(s2_list, ignore_index=True).drop_duplicates(subset=["entity_id"])
-    s3_df = pd.concat(s3_list, ignore_index=True).drop_duplicates(subset=["entity_id"])
     print(f"Loaded Target Pool: S2 = {len(s2_df):,}, S3 = {len(s3_df):,}")
 
     print("\n==========================================")
@@ -372,10 +398,12 @@ if __name__ == "__main__":
     parser.add_argument("--samples", type=int, default=15000, help="Number of S1 entities to load for training/val")
     parser.add_argument("--val-split", type=float, default=0.20, help="Validation split ratio")
     parser.add_argument("--seed", type=int, default=RANDOM_SEED, help="Random seed")
+    parser.add_argument("--no-cache", action="store_true", help="Force loading from raw TSVs instead of cache")
     args = parser.parse_args()
 
     train_pipeline(
         n_sample_s1=args.samples,
         val_split_ratio=args.val_split,
         random_seed=args.seed,
+        use_cache=not args.no_cache,
     )

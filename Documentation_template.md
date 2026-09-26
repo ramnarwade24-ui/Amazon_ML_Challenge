@@ -97,11 +97,13 @@ The feature engineering module ([src/features.py](file:///d:/amzaon%20ml/amazon_
 
 ### 5.1 Validation Performance Metrics
 On held-out validation Source 1 entities:
-- **Macro $F_{0.5}$ Score**: **0.7850** (Official Challenge Scored Metric)
-- **Overall Precision**: **99.44%** (3,554 True Positives, 20 False Positives)
-- **Overall Recall**: **68.15%**
-- **Singleton Accuracy ($F_{0.5}$)**: **98.65%** (73 out of 74 singletons correctly predicted as empty)
-- **Non-Singleton Macro $F_{0.5}$**: **0.7746**
+- **Macro $F_{0.5}$ Score**: **0.9573** (Official Challenge Scored Metric)
+- **Overall Precision**: **98.84%** (9,627 True Positives, 113 False Positives)
+- **Overall Recall**: **93.42%** (678 False Negatives)
+- **Singleton Accuracy ($F_{0.5}$)**: **96.41%** (161 out of 167 singletons correctly predicted as empty)
+- **Non-Singleton Macro $F_{0.5}$**: **0.9569**
+- **Candidate Blocking Recall**: **98.20%** partial recall, **97.91%** pairwise ceiling recall
+- **Official Submission Validator**: **PASS** (Exit code 0, 0 formatting or integrity errors)
 
 ### 5.2 Error Analysis
 - **Common False Positives (Wrong Merges)**: Almost entirely eliminated by the high precision threshold ($\tau^* = 0.470$). The few observed false merges occurred between co-located franchised businesses sharing identical street addresses and similar parent brand names (e.g. generic trade names in the same commercial complex).
